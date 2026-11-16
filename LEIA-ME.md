@@ -5,14 +5,19 @@ Este sistema precisa de um projeto Supabase próprio; não reutilize o projeto d
 
 ## 1. Supabase
 1. Crie um projeto em supabase.com.
-2. Vá em **SQL Editor**, cole o conteúdo de `supabase.sql` e clique em **Run**.
-3. Vá em **Project Settings → API** e copie a **Project URL** e a chave pública (**anon** ou **publishable**).
-4. No início do script de `index.html`, troque `COLE_AQUI_A_URL_DO_PROJETO` e `COLE_AQUI_A_CHAVE_PUBLICA` pela URL do projeto e pela chave pública copiada.
+2. No **SQL Editor**, execute `supabase.sql` e depois `supabase-containers.sql`.
+3. Em **Project Settings → API**, copie a **Project URL** e a chave pública (**anon** ou **publishable**).
+4. No início do script de `index.html`, configure a URL do projeto e a chave pública.
    Nunca use a chave `service_role` aqui.
 
 ## 2. Vercel
 1. Na Vercel: **Add New → Project**, importe este repositório, deixe **Framework Preset: Other** e clique em **Deploy**.
 2. Abra o link que a Vercel gerar. O sistema só funcionará depois de configurar a URL e a chave pública do Supabase no `index.html` e enviar a alteração ao GitHub.
+
+## Importar contêineres
+- Selecione **Importar contêiner** ou solte uma planilha `.xlsx`, `.xls` ou `.csv` em qualquer lugar do site.
+- Informe o nome ou número do contêiner. A planilha precisa ter colunas de SKU/货号, nome/品名, custo e Shopee.
+- O preço Shopee pode ser editado na tabela; lucro e percentual são recalculados pelas taxas configuradas.
 
 ## Observações
 - Sem login: quem tiver o link do site consegue ver, editar e apagar os dados.
