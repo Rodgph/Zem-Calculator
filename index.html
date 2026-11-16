@@ -94,14 +94,15 @@ td input{width:84px;text-align:right}
 
 <script type="module">
 import {createClient} from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/+esm';
-const SUPABASE_URL='https://xumctjeojharxuwvwtlh.supabase.co';
-const SUPABASE_KEY='sb_publishable_oeeoqHfk6GVzyXA-fqLs4w_c40n_R6_';
+const SUPABASE_URL='COLE_AQUI_A_URL_DO_PROJETO';
+const SUPABASE_KEY='COLE_AQUI_A_CHAVE_PUBLICA';
+const configured=SUPABASE_URL.startsWith('https://')&&!SUPABASE_URL.includes('COLE')&&!SUPABASE_KEY.includes('COLE');
 const BUCKET='produtos', DEF_M=20;
 const $=id=>document.getElementById(id);
 const MK=[{k:'tiktok',n:'TikTok Shop'},{k:'shopee',n:'Shopee'},{k:'ml',n:'Mercado Livre'}];
 let fees={tiktok:{com:6,fix:0,imp:0},shopee:{com:20,fix:4,imp:0},ml:{com:14,fix:6,imp:0}};
 let products=[],tab='tiktok',newImg='',newBlob=null,rowIdx=-1;
-const sb=createClient(SUPABASE_URL,SUPABASE_KEY);
+const sb=configured?createClient(SUPABASE_URL,SUPABASE_KEY):null;
 const num=v=>{const x=parseFloat(String(v).trim().replace(',','.'));return isFinite(x)?x:0};
 const brl=v=>isFinite(v)?v.toLocaleString('pt-BR',{style:'currency',currency:'BRL'}):'—';
 const esc=s=>String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
@@ -118,13 +119,14 @@ function calc(p){
  const price=(p.custo+f.fix)/d;return {price,profit:price*m};
 }
 function drawTabs(){
- $('tabs').innerHTML=MK.map(m=>`<button class="tab${m.k===tab?' on':''}" data-k="${m.k}" type="button">${m.n}</button>`).join('');
+ $('tabs').innerHTML=MK.map(m=>`<button class="tab${m.k===tab?' on':''}" data-k="${m.k}" type="button"${configured?'':' disabled'}>${m.n}</button>`).join('');
  $('feeTitle').textContent='Taxas — '+MK.find(m=>m.k===tab).n;
  const f=fees[tab];$('fcom').value=f.com;$('ffix').value=f.fix;$('fimp').value=f.imp;
+ ['fcom','ffix','fimp'].forEach(id=>$(id).disabled=!configured);
 }
 function drawList(){
  const el=$('list');
- if(!products.length){el.innerHTML='<p class="empty">Nenhum produto ainda. Clique em “Adicionar produto”.</p>';return}
+ if(!products.length){el.innerHTML=`<p class="empty">${configured?'Nenhum produto ainda. Clique em “Adicionar produto”.':'Configure o Supabase para começar.'}</p>`;return}
  el.innerHTML='<div class="tw"><table><thead><tr><th></th><th>SKU</th><th>Custo</th><th>Margem (%)</th><th>Preço de venda</th><th>Lucro</th><th></th></tr></thead><tbody>'+
  products.map((p,i)=>{const r=calc(p),m=p.m[tab]!=null?p.m[tab]:DEF_M;
   return `<tr data-i="${i}"><td>${p.img?`<img class="th" title="Trocar imagem" src="${esc(p.img)}" alt="">`:'<span class="th ph" title="Adicionar imagem"></span>'}</td><td class="cc sku" title="Clique para editar">${esc(String(p.sku).toUpperCase())}</td><td class="cc" title="Clique para editar">${brl(p.custo)}</td><td><input class="mi" inputmode="decimal" value="${Number(m).toFixed(2)}"></td><td class="pr" data-c="price"><input class="pi" inputmode="decimal" value="${Number.isFinite(r.price)?r.price.toFixed(2):''}"></td><td data-c="profit">${brl(r.profit)}</td><td><button class="btn ghost del" type="button">Remover</button></td></tr>`}).join('')+'</tbody></table></div>';
@@ -132,7 +134,7 @@ function drawList(){
 function updateRow(tr){const p=products[+tr.dataset.i];const r=calc(p);const pi=tr.querySelector('.pi');if(pi)pi.value=Number.isFinite(r.price)?r.price.toFixed(2):'';tr.querySelector('[data-c=profit]').textContent=brl(r.profit);const mi=tr.querySelector('.mi');if(mi && p.m[tab]!=null)mi.value=Number(p.m[tab]).toFixed(2)}
 
 async function load(){
- if(SUPABASE_URL.startsWith('COLE')){say('Falta configurar a URL e a chave do Supabase no início do script (veja o LEIA-ME).');drawTabs();drawList();return}
+ if(!configured){$('add').disabled=true;say('Configure a URL e a chave pública do Supabase no início do script (veja o LEIA-ME).');drawTabs();drawList();return}
  say('Carregando…');
  const a=await sb.from('products').select('*').order('created_at',{ascending:false});
  const f=await sb.from('fees').select('*');
