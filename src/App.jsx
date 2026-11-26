@@ -125,27 +125,35 @@ export default function App() {
 
       let completed = 0;
       const rows = await mapWithConcurrency(imported, 3, async product => {
-        let imagePath = null;
-        if (product.loadImage || product.imageUrl) {
+        async function uploadProductImage(loader, url, label) {
+          if (!loader && !url) return null;
           try {
-            const imageFile = product.loadImage
-              ? await product.loadImage()
-              : await downloadImageUrl(product.imageUrl);
-            imagePath = await uploadImage(imageFile);
+            const imageFile = loader ? await loader() : await downloadImageUrl(url);
+            const imagePath = await uploadImage(imageFile);
             uploadedImagePaths.push(imagePath);
+            return imagePath;
           } catch (error) {
-            throw new Error(`Imagem do SKU ${product.sku}: ${error.message || String(error)}`);
+            throw new Error(`Imagem ${label} do SKU ${product.sku}: ${error.message || String(error)}`);
           }
         }
+
+        const imagePath = await uploadProductImage(product.loadImage, product.imageUrl, 'principal');
+        const secondaryImagePath = await uploadProductImage(
+          product.loadImageSecondary,
+          product.imageUrlSecondary,
+          'secundária',
+        );
         completed += 1;
         setImportStatus(`Preparando produtos e imagens (${completed}/${imported.length})...`);
         return {
           container_id: container.id,
           nome: product.nome,
+          descricao: product.descricao,
           sku: product.sku,
           custo: product.custo,
           shopee: product.shopee,
           img_path: imagePath,
+          img_path_secondary: secondaryImagePath,
           margens: { tiktok: DEFAULT_MARGIN, shopee: DEFAULT_MARGIN, ml: DEFAULT_MARGIN },
         };
       });
@@ -161,7 +169,10 @@ export default function App() {
       setPendingFile(null);
       setImportStatus('');
       navigate(`/produtos?container=${encodeURIComponent(container.id)}`);
-      const imageCount = rows.filter(product => product.img_path).length;
+      const imageCount = rows.reduce(
+        (total, product) => total + Number(Boolean(product.img_path)) + Number(Boolean(product.img_path_secondary)),
+        0,
+      );
       notify(imageCount
         ? `Contêiner importado com ${rows.length} produtos e ${imageCount} imagens.`
         : `Contêiner importado com ${rows.length} produtos.`);

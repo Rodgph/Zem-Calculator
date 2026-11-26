@@ -1,9 +1,10 @@
-import { Fragment, useCallback, useEffect, useMemo, useState } from 'react';
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import ConfirmDialog from '../components/ConfirmDialog.jsx';
 import ImageViewer from '../components/ImageViewer.jsx';
 import KitFormDialog from '../components/KitFormDialog.jsx';
 import MarketplaceFeesDialog from '../components/MarketplaceFeesDialog.jsx';
+import Modal from '../components/Modal.jsx';
 import ProductFormDialog from '../components/ProductFormDialog.jsx';
 import { supabase } from '../lib/supabase.js';
 import {
@@ -49,28 +50,45 @@ function formatPercentInput(value) {
     : '';
 }
 
+async function getFunctionErrorMessage(error) {
+  const response = error?.context;
+  if (response && typeof response.clone === 'function') {
+    const body = await response.clone().json().catch(() => null);
+    if (typeof body?.error === 'string' && body.error.trim()) return body.error.trim();
+  }
+  return error?.message || String(error);
+}
+
 function ProductRow({
   product,
   margin,
   fees,
   visibleMarkets,
   isKit = false,
+  hasVariants = false,
   displayImagePath,
+  displaySecondaryImagePath,
   onSavePrice,
   onSaveField,
   onSaveMargin,
   onNotice,
   onDelete,
-  onViewImage,
+  onViewImages,
   onAddKit,
   allowAddKit = false,
+  onCreateUpseller,
 }) {
   const [priceDraft, setPriceDraft] = useState(formatAmountInput(product.shopee));
   const [priceDirty, setPriceDirty] = useState(false);
   const [skuDraft, setSkuDraft] = useState(product.sku ?? '');
   const [nameDraft, setNameDraft] = useState(product.nome ?? '');
+  const [descricaoDraft, setDescricaoDraft] = useState(product.descricao ?? '');
+  const [editingDescricao, setEditingDescricao] = useState(false);
   const [costDraft, setCostDraft] = useState(formatAmountInput(product.custo));
   const [costDirty, setCostDirty] = useState(false);
+  const primaryImagePath = displayImagePath || product.img_path;
+  const secondaryImagePath = displaySecondaryImagePath || product.img_path_secondary;
+  const thumbnailImagePath = primaryImagePath || secondaryImagePath;
   const calculations = useMemo(() => {
     const marginKeys = new Set([...Object.keys(product.margens || {}), ...Object.keys(fees)]);
     const adjusted = {
@@ -95,6 +113,10 @@ function ProductRow({
   useEffect(() => setSkuDraft(product.sku ?? ''), [product.sku]);
   useEffect(() => setNameDraft(product.nome ?? ''), [product.nome]);
   useEffect(() => {
+    setDescricaoDraft(product.descricao ?? '');
+    setEditingDescricao(false);
+  }, [product.descricao]);
+  useEffect(() => {
     setCostDraft(formatAmountInput(product.custo));
     setCostDirty(false);
   }, [product.custo]);
@@ -118,6 +140,21 @@ function ProductRow({
       return;
     }
     if (!await onSaveField(product, 'nome', name)) setNameDraft(product.nome ?? '');
+  }
+
+  async function saveDescricao() {
+    const descricao = descricaoDraft.trim();
+    if (descricao === (product.descricao ?? '')) return;
+    if (!await onSaveField(product, 'descricao', descricao)) setDescricaoDraft(product.descricao ?? '');
+  }
+
+  async function copyDescricao() {
+    try {
+      await navigator.clipboard.writeText(product.descricao);
+      onNotice('Descrição copiada.');
+    } catch (error) {
+      onNotice(`Não foi possível copiar a descrição: ${error.message || String(error)}`, 'error');
+    }
   }
 
   async function saveCost() {
@@ -169,19 +206,139 @@ function ProductRow({
     }
   }
 
+  // Componente de barra de progresso detalhada para o pipeline Upseller
+  function UpsellerProgressBar({ progress, sse, storeName }) {
+    const stages = [
+      { key: 'opening', label: 'Abrir UpSeller e selecionar loja', detail: 'A aba abre e seleciona sua loja automaticamente' },
+      { key: 'reading', label: 'Lendo título e descrição', detail: 'Processando nome e descrição do produto' },
+      { key: 'vision', label: 'Analisando imagens (Visão computacional)', detail: 'GPT-4o Vision identifica produto, materiais, cores, acessórios nas fotos' },
+      { key: 'web_search', label: 'Buscando no Shopee, ML, 1688, Alibaba', detail: 'Enriquecendo com preços, specs e reviews reais de mercado' },
+      { key: 'synthesis', label: 'Sintetizando anúncio completo', detail: 'Título otimizado, categoria 5 níveis, descrição rica, peso/medidas' },
+      { key: 'image_generation', label: 'Gerando imagem profissional', detail: 'Foto principal quadrada, fundo branco, sem embalagem de transporte' },
+      { key: 'filling', label: 'Preenchendo no UpSeller', detail: 'Nome, categoria, descrição, SKU, preço, medidas, logística, imagem' },
+    ];
+
+    const currentStageIndex = stages.findIndex(s => s.key === progress.step || s.key === progress.phase);
+    const effectiveStage = Math.max(0, currentStageIndex);
+    const totalStages = stages.length;
+
+    const getStepStatus = (index) => {
+      if (progress.phase === 'error') {
+        if (index < effectiveStage) return 'complete';
+        if (index === effectiveStage) return 'error';
+        return 'pending';
+      }
+      if (progress.phase === 'complete') return 'complete';
+      if (index < effectiveStage) return 'complete';
+      if (index === effectiveStage) return 'active';
+      return 'pending';
+    };
+
+    const overallProgress = progress.phase === 'complete' ? 100 :
+      progress.phase === 'error' ? 0 :
+      Math.round(((effectiveStage + (progress.phase === 'generating' && sse ? 0.3 : 0)) / totalStages) * 100);
+
+    return (
+      <div className="upseller-progress-detailed">
+        <div className="upseller-progress-header">
+          <div className="upseller-progress-overall">
+            <div className="upseller-progress-bar-track">
+              <div
+                className="upseller-progress-bar-fill"
+                style={{ width: `${overallProgress}%` }}
+                role="progressbar"
+                aria-valuenow={overallProgress}
+                aria-valuemin={0}
+                aria-valuemax={100}
+              />
+            </div>
+            <span className="upseller-progress-percent">{overallProgress}%</span>
+          </div>
+          {storeName && <span className="upseller-store-badge">Loja: {storeName}</span>}
+        </div>
+
+        <ol className="upseller-progress-steps-detailed">
+          {stages.map((stage, index) => {
+            const status = getStepStatus(index);
+            const isActive = status === 'active';
+            const isComplete = status === 'complete';
+            const isError = status === 'error';
+            const sseData = sse && sse.step === stage.key ? sse : null;
+
+            return (
+              <li key={stage.key} className={`upseller-step ${status}`}>
+                <div className="upseller-step-indicator">
+                  <span className={`upseller-step-icon ${isActive ? 'spinning' : ''}`}>
+                    {isActive ? (
+                      <span className="upseller-spinner" aria-hidden="true" />
+                    ) : isComplete ? (
+                      '✓'
+                    ) : isError ? (
+                      '!'
+                    ) : (
+                      index + 1
+                    )}
+                  </span>
+                </div>
+                <div className="upseller-step-content">
+                  <div className="upseller-step-main">
+                    <strong>{stage.label}</strong>
+                    <small>{stage.detail}</small>
+                  </div>
+                  {isActive && sseData && (
+                    <div className="upseller-step-live">
+                      <span className="upseller-live-dot" aria-hidden="true" />
+                      <span>{sseData.message}</span>
+                      {sseData.data && typeof sseData.data === 'object' && (
+                        <pre className="upseller-debug-data">{JSON.stringify(sseData.data, null, 2)}</pre>
+                      )}
+                    </div>
+                  )}
+                  {isError && (
+                    <div className="upseller-step-error">
+                      {progress.message}
+                    </div>
+                  )}
+                </div>
+              </li>
+            );
+          })}
+        </ol>
+
+        {progress.phase === 'generating' && sse && (
+          <div className="upseller-sse-status">
+            <span className="upseller-sse-connected" aria-hidden="true">●</span>
+            <span>Conectado à IA — recebendo atualizações em tempo real</span>
+          </div>
+        )}
+      </div>
+    );
+  }
+
   return (
     <tr className={isKit ? 'kit-row' : undefined}>
       <td className="product-name-cell">
         <div className={`product-ident${isKit ? ' kit-ident' : ''}`}>
           {isKit && <span className="kit-branch" aria-hidden="true">↳</span>}
-          {(displayImagePath || product.img_path) ? (
+          {thumbnailImagePath ? (
             <button
               className="image-preview-button"
               type="button"
-              onClick={() => onViewImage(publicImageUrl(displayImagePath || product.img_path), product.nome || product.sku)}
-              aria-label={`Ampliar imagem de ${product.nome || product.sku}`}
+              onClick={() => onViewImages([
+                ...(primaryImagePath ? [{
+                  src: publicImageUrl(primaryImagePath),
+                  alt: `${product.nome || product.sku} — imagem principal`,
+                  label: 'Imagem principal',
+                }] : []),
+                ...(secondaryImagePath ? [{
+                  src: publicImageUrl(secondaryImagePath),
+                  alt: `${product.nome || product.sku} — imagem secundária`,
+                  label: 'Imagem secundária',
+                }] : []),
+              ])}
+              aria-label={`Ampliar imagem${primaryImagePath && secondaryImagePath ? 's' : ''} de ${product.nome || product.sku}`}
             >
-              <img className="product-thumb" src={publicImageUrl(displayImagePath || product.img_path)} alt="" />
+              <img className="product-thumb" src={publicImageUrl(thumbnailImagePath)} alt="" />
             </button>
           ) : (
             <span className="product-thumb placeholder-thumb" aria-hidden="true">Z</span>
@@ -202,7 +359,20 @@ function ProductRow({
                 <small className="kit-quantity">{product.kit_quantity} unidades no kit</small>
               </>
             ) : (
-              <strong>{product.nome || 'Produto sem nome'}</strong>
+              <>
+                <strong>{product.nome || 'Produto sem nome'}</strong>
+                {product.descricao && (
+                  <button
+                    className="product-description-copy"
+                    type="button"
+                    title={product.descricao}
+                    onClick={copyDescricao}
+                    aria-label={`Copiar descrição de ${product.nome || product.sku}`}
+                  >
+                    {product.descricao}
+                  </button>
+                )}
+              </>
             )}
             <small className="editable-sku">
               SKU:
@@ -216,6 +386,35 @@ function ProductRow({
                 aria-label={`SKU do produto ${product.nome || product.sku}`}
               />
             </small>
+            {!isKit && (
+              <>
+                <button
+                  className="description-edit-button"
+                  type="button"
+                  onClick={() => setEditingDescricao(current => !current)}
+                  aria-label={`${editingDescricao ? 'Fechar edição da' : 'Editar'} descrição de ${product.nome || product.sku}`}
+                >
+                  {editingDescricao ? 'Fechar descrição' : 'Editar descrição'}
+                </button>
+                {editingDescricao && (
+                  <textarea
+                    className="description-editor"
+                    value={descricaoDraft}
+                    onChange={event => setDescricaoDraft(event.target.value)}
+                    onBlur={saveDescricao}
+                    onKeyDown={event => {
+                      if (event.key === 'Enter' && !event.shiftKey) {
+                        event.preventDefault();
+                        event.currentTarget.blur();
+                      }
+                    }}
+                    aria-label={`Descrição do produto ${product.nome || product.sku}`}
+                    rows={2}
+                    placeholder="Descrição das mercadorias"
+                  />
+                )}
+              </>
+            )}
           </span>
         </div>
       </td>
@@ -295,6 +494,17 @@ function ProductRow({
             +
           </button>
         )}
+        {!isKit && onCreateUpseller && (
+          <button
+            className="icon-button upseller-button"
+            type="button"
+            onClick={() => onCreateUpseller(product, { hasVariants })}
+            aria-label={`Criar anúncio no Upseller para ${product.nome || product.sku}`}
+            title="Criar anúncio no Upseller (Shopee)"
+          >
+            ⬆
+          </button>
+        )}
         <button className="icon-button danger-text" type="button" onClick={() => onDelete(product)} aria-label={`Apagar produto ${product.sku}`}>
           ×
         </button>
@@ -336,13 +546,16 @@ export default function ContainerPage({
   const [deleteBusy, setDeleteBusy] = useState(false);
   const [productToDelete, setProductToDelete] = useState(null);
   const [productDeleteBusy, setProductDeleteBusy] = useState(false);
-  const [viewingImage, setViewingImage] = useState(null);
+  const [viewingImages, setViewingImages] = useState(null);
   const [marketFees, setMarketFees] = useState(DEFAULT_FEES);
   const [feesDialogOpen, setFeesDialogOpen] = useState(false);
   const [feesBusy, setFeesBusy] = useState(false);
   const [feesError, setFeesError] = useState('');
   const [visibleMarkets, setVisibleMarkets] = useState(readVisibleMarkets);
   const [marketToAdd, setMarketToAdd] = useState('');
+  const [upsellerProgress, setUpsellerProgress] = useState(null);
+  const [upsellerSSE, setUpsellerSSE] = useState(null);
+  const eventSourceRef = useRef(null);
 
   const loadProducts = useCallback(async () => {
     setLoadingProducts(true);
@@ -472,14 +685,14 @@ export default function ContainerPage({
   async function saveProductField(product, field, value) {
     const { error } = await supabase.from('products').update({ [field]: value }).eq('id', product.id);
     if (error) {
-      const fieldName = { nome: 'o nome', sku: 'o SKU', custo: 'o custo' }[field] || field;
+      const fieldName = { nome: 'o nome', sku: 'o SKU', custo: 'o custo', descricao: 'a descrição' }[field] || field;
       onNotice(`Não foi possível salvar ${fieldName}: ${error.message}`, 'error');
       return false;
     }
     setProducts(current => current
       .map(item => item.id === product.id ? { ...item, [field]: value } : item)
       .sort((a, b) => String(a.sku).localeCompare(String(b.sku))));
-    onNotice(`${{ nome: 'Nome', sku: 'SKU', custo: 'Custo' }[field] || field} atualizado.`);
+    onNotice(`${{ nome: 'Nome', sku: 'SKU', custo: 'Custo', descricao: 'Descrição' }[field] || field} atualizado.`);
     return true;
   }
 
@@ -537,6 +750,237 @@ export default function ContainerPage({
     }
   }
 
+  async function handleCreateUpseller(
+    product,
+    { hasVariants = false } = {},
+  ) {
+    // Verifica se a extensão está disponível
+    if (typeof chrome === 'undefined' || !chrome.runtime || !chrome.runtime.sendMessage) {
+      onNotice('Extensão Upseller Bridge não detectada. Instale a extensão no Chrome.', 'error');
+      return;
+    }
+
+    const extensionId = 'gfmeaommeefhgngokhdoknkgfccgklmj';
+    const marginKeys = new Set([...Object.keys(product.margens || {}), ...Object.keys(marketFees)]);
+    const adjustedProduct = {
+      ...product,
+      margens: Object.fromEntries([...marginKeys].map(key => [key, margin])),
+    };
+    const salePrice = calculateProduct(adjustedProduct, 'shopee', marketFees).price;
+    const productData = {
+      nome: product.nome || product.sku,
+      descricao: product.descricao,
+      sku: product.sku,
+      image_urls: [...new Set([product.img_path, product.img_path_secondary]
+        .filter(Boolean)
+        .map(publicImageUrl))].slice(0, 3),
+      sale_price: Number.isFinite(salePrice) && salePrice > 0 ? salePrice : null,
+      model_type: hasVariants ? 'variants' : 'simple',
+    };
+
+    if (productData.image_urls.length === 0) {
+      onNotice('Adicione ao menos uma foto ao produto para gerar a imagem do anúncio.', 'error');
+      return;
+    }
+
+    function sendExtensionMessage(message) {
+      return new Promise((resolve, reject) => {
+        chrome.runtime.sendMessage(extensionId, message, response => {
+          if (chrome.runtime.lastError) {
+            const errorMessage = chrome.runtime.lastError.message || '';
+            reject(new Error(
+              /Could not establish connection|Receiving end does not exist/i.test(errorMessage)
+                ? 'A extensão Upseller Bridge não está instalada ou está desatualizada neste Chrome. Reinstale a versão atualizada e tente novamente.'
+                : errorMessage,
+            ));
+          } else {
+            resolve(response);
+          }
+        });
+      });
+    }
+
+    // Inicia SSE para geração do anúncio
+    setUpsellerProgress({ phase: 'generating', stage: 1, totalStages: 5, message: 'Conectando à IA...', storeName: '' });
+    setUpsellerSSE({ stage: 1, totalStages: 5, step: 'connecting', message: 'Conectando à IA...' });
+
+    let tabId;
+    let storeName = '';
+    let finalListing = null;
+
+    try {
+      // 1. Abre UpSeller e seleciona loja
+      setUpsellerProgress({ phase: 'opening', stage: 0, totalStages: 5, message: 'Abrindo UpSeller e selecionando loja...', storeName: '' });
+      setUpsellerSSE({ stage: 0, totalStages: 5, step: 'opening', message: 'Abrindo UpSeller e selecionando loja...' });
+      onNotice('Abrindo o UpSeller e selecionando a loja...');
+
+      const openResponse = await sendExtensionMessage({ type: 'OPEN_SHOPEE' });
+      if (!openResponse?.ok || !Number.isInteger(openResponse.tabId)) {
+        throw new Error(openResponse?.error || 'Não foi possível preparar o formulário do UpSeller.');
+      }
+      tabId = openResponse.tabId;
+      storeName = openResponse.store?.value || '';
+
+      setUpsellerProgress({ phase: 'generating', stage: 1, totalStages: 5, message: `Loja ${storeName} selecionada. Iniciando geração com IA...`, storeName });
+      setUpsellerSSE({ stage: 1, totalStages: 5, step: 'reading', message: 'Lendo título e descrição...', storeName });
+      onNotice(`${storeName ? `Loja ${storeName} selecionada. ` : ''}Iniciando geração com IA...`);
+
+      // 2. Chama Edge Function com SSE
+      const functionUrl = `${(await supabase.auth.getSession()).data.session?.user?.identities?.[0]?.identity_data?.provider === 'email' ? '' : ''}`;
+      // Usa invoke com stream
+      const { data: streamData, error: streamError } = await supabase.functions.invoke('generate-listing', {
+        body: productData,
+        options: { headers: { 'Accept': 'text/event-stream' } },
+      });
+
+      // Fallback: se não suportar stream, usa invoke normal
+      if (streamError || !streamData) {
+        console.warn('SSE não disponível, usando invoke padrão');
+        const { data, error } = await supabase.functions.invoke('generate-listing', { body: productData });
+        if (error) throw error;
+        finalListing = data;
+      } else if (streamData instanceof ReadableStream) {
+        // Processa stream SSE
+        finalListing = await processSSEStream(streamData, (progress) => {
+          setUpsellerProgress({ phase: 'generating', stage: progress.stage, totalStages: progress.totalStages, message: progress.message, storeName });
+          setUpsellerSSE(progress);
+          // Also send to extension for toast updates
+          if (tabId) {
+            sendExtensionMessage({
+              type: 'UPDATE_PROGRESS',
+              tabId,
+              stage: progress.stage,
+              step: progress.step,
+              message: progress.message,
+              storeName,
+              totalStages: progress.totalStages,
+              data: progress.data,
+            }).catch(e => console.warn('Failed to send progress to extension:', e));
+          }
+        });
+      } else {
+        finalListing = streamData;
+      }
+
+      if (!finalListing?.generated_image_url) {
+        throw new Error('A IA não retornou a imagem gerada.');
+      }
+
+      // 3. Preenche no UpSeller etapa por etapa
+      setUpsellerProgress({ phase: 'filling', stage: 5, totalStages: 5, message: 'Geração concluída. Preenchendo anúncio no UpSeller...', storeName });
+      setUpsellerSSE({ stage: 5, totalStages: 5, step: 'filling', message: 'Preenchendo anúncio no UpSeller...', storeName });
+      onNotice('Geração concluída. Preenchendo anúncio no UpSeller...');
+
+      await sendStage('FILL_TITLE_CATEGORY', {
+        nome_optimized: finalListing.title_optimized,
+        category_path: finalListing.category_path,
+      }, 'Preenchendo nome e categoria...');
+
+      await sendStage('FILL_DESCRIPTION', {
+        description_optimized: finalListing.description_optimized,
+      }, 'Preenchendo descrição...');
+
+      await sendStage('FILL_SKU', {
+        nome_optimized: finalListing.title_optimized,
+        sku: productData.sku || null,
+      }, 'Preenchendo SKU...');
+
+      await sendStage('FILL_MODEL_PRICE_SHIPPING', {
+        weight_kg: finalListing.weight_kg,
+        width_cm: finalListing.width_cm,
+        length_cm: finalListing.length_cm,
+        height_cm: finalListing.height_cm,
+        sale_price: productData.sale_price,
+        model_type: productData.model_type,
+      }, 'Configurando modelo, preço, peso e medidas...');
+
+      await sendStage('FILL_IMAGES', {
+        generated_image_urls: [finalListing.generated_image_url],
+      }, 'Adicionando imagem do anúncio...');
+
+      setUpsellerProgress({ phase: 'complete', stage: 5, totalStages: 5, message: 'Anúncio preparado! Confira todos os dados antes de publicar.', storeName });
+      setUpsellerSSE({ stage: 5, totalStages: 5, step: 'complete', message: 'Anúncio preparado! Confira todos os dados antes de publicar.', storeName });
+      onNotice('Anúncio preparado em etapas. Confira todos os dados antes de publicar.');
+
+    } catch (error) {
+      const reason = await getFunctionErrorMessage(error);
+      const message = `Não foi possível concluir o anúncio: ${reason}`;
+      setUpsellerProgress({ phase: 'error', stage: 'error', totalStages: 5, message, storeName });
+      setUpsellerSSE({ stage: 5, totalStages: 5, step: 'error', message, storeName });
+      try {
+        await sendExtensionMessage({
+          type: 'UPDATE_PROGRESS',
+          tabId,
+          step: 'error',
+          message,
+          status: 'error',
+          storeName,
+        });
+      } catch (progressError) {
+        console.warn('Não foi possível atualizar o aviso no UpSeller:', progressError.message || String(progressError));
+      }
+      onNotice(message, 'error');
+    }
+  }
+
+  async function processSSEStream(stream, onProgress) {
+    const reader = stream.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    let finalData = null;
+
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+
+        const lines = buffer.split('\n\n');
+        buffer = lines.pop() || '';
+
+        for (const line of lines) {
+          if (line.startsWith('data: ')) {
+            const data = line.slice(6).trim();
+            if (!data) continue;
+            try {
+              const parsed = JSON.parse(data);
+              if (parsed.stage !== undefined) {
+                onProgress(parsed);
+              } else if (parsed.title_optimized) {
+                finalData = parsed;
+              }
+            } catch (e) {
+              // Ignora linhas inválidas
+            }
+          } else if (line.startsWith('event: complete')) {
+            const dataLine = line.split('\n').find(l => l.startsWith('data: '));
+            if (dataLine) {
+              finalData = JSON.parse(dataLine.slice(6));
+            }
+          } else if (line.startsWith('event: error')) {
+            const dataLine = line.split('\n').find(l => l.startsWith('data: '));
+            if (dataLine) {
+              const err = JSON.parse(dataLine.slice(6));
+              throw new Error(err.error || 'Erro no stream');
+            }
+          }
+        }
+      }
+    } finally {
+      reader.releaseLock();
+    }
+
+    return finalData;
+  }
+
+  async function sendStage(type, payload, progressText) {
+    setUpsellerProgress({ phase: 'filling', storeName, message: progressText });
+    setUpsellerSSE({ stage: 5, totalStages: 5, step: 'filling', message: progressText, storeName });
+    onNotice(progressText);
+    const response = await sendExtensionMessage({ type, tabId: tabId, payload });
+    if (!response?.ok) throw new Error(response?.error || 'A etapa não foi concluída no UpSeller.');
+  }
+
   function addMarketplace(event) {
     const market = event.target.value;
     if (!market) return;
@@ -558,6 +1002,7 @@ export default function ContainerPage({
         .insert({
           container_id: id,
           nome: values.nome,
+          descricao: values.descricao,
           sku: values.sku,
           custo: values.custo,
           shopee: null,
@@ -648,7 +1093,7 @@ export default function ContainerPage({
     setProducts(current => current.filter(item => !removedProducts.some(removed => removed.id === item.id)));
     setProductToDelete(null);
     setProductDeleteBusy(false);
-    const imagePaths = removedProducts.map(item => item.img_path).filter(Boolean);
+    const imagePaths = removedProducts.flatMap(item => [item.img_path, item.img_path_secondary]).filter(Boolean);
     if (imagePaths.length) {
       const failures = await removeImages(imagePaths);
       if (failures.length) onNotice(`Produto apagado, mas não foi possível limpar a imagem: ${failures.join('; ')}`, 'error');
@@ -659,7 +1104,7 @@ export default function ContainerPage({
     setDeleteBusy(true);
     const { data: imageRows, error: imagesError } = await supabase
       .from('products')
-      .select('img_path')
+      .select('img_path,img_path_secondary')
       .eq('container_id', id);
     if (imagesError) {
       setDeleteBusy(false);
@@ -674,7 +1119,9 @@ export default function ContainerPage({
       return;
     }
 
-    const failures = await removeImages((imageRows || []).map(row => row.img_path));
+    const failures = await removeImages(
+      (imageRows || []).flatMap(row => [row.img_path, row.img_path_secondary]),
+    );
     setDeleteBusy(false);
     setDeleteOpen(false);
     await onContainersChanged();
@@ -845,14 +1292,16 @@ export default function ContainerPage({
                     margin={margin}
                     fees={marketFees}
                     visibleMarkets={visibleMarkets}
+                    hasVariants={kits.length > 0}
                     allowAddKit={scope === 'container'}
                     onSavePrice={savePrice}
                     onSaveField={saveProductField}
                     onSaveMargin={saveProductMargin}
                     onNotice={onNotice}
                     onDelete={setProductToDelete}
-                    onViewImage={(src, alt) => setViewingImage({ src, alt })}
+                    onViewImages={setViewingImages}
                     onAddKit={setProductToKit}
+                    onCreateUpseller={handleCreateUpseller}
                   />
                   {kits.map(kit => (
                     <ProductRow
@@ -863,12 +1312,13 @@ export default function ContainerPage({
                       visibleMarkets={visibleMarkets}
                       isKit
                       displayImagePath={product.img_path}
+                      displaySecondaryImagePath={product.img_path_secondary}
                       onSavePrice={savePrice}
                       onSaveField={saveProductField}
                       onSaveMargin={saveProductMargin}
                       onNotice={onNotice}
                       onDelete={setProductToDelete}
-                      onViewImage={(src, alt) => setViewingImage({ src, alt })}
+                      onViewImages={setViewingImages}
                     />
                   ))}
                 </Fragment>
@@ -893,11 +1343,10 @@ export default function ContainerPage({
           onSave={saveMarketplaceFees}
         />
       )}
-      {viewingImage && (
+      {viewingImages && (
         <ImageViewer
-          src={viewingImage.src}
-          alt={viewingImage.alt}
-          onClose={() => setViewingImage(null)}
+          images={viewingImages}
+          onClose={() => setViewingImages(null)}
         />
       )}
       {productToKit && (
@@ -929,6 +1378,114 @@ export default function ContainerPage({
           onConfirm={deleteProduct}
           confirmLabel={productToDelete.parent_product_id ? 'Apagar kit' : 'Apagar produto'}
         />
+      )}
+      {upsellerProgress && (
+        <Modal
+          title={upsellerProgress.phase === 'opening'
+            ? 'Abrindo o UpSeller'
+            : upsellerProgress.phase === 'generating'
+              ? 'Gerando anúncio com IA'
+              : upsellerProgress.phase === 'filling'
+                ? 'Preenchendo no UpSeller'
+                : upsellerProgress.phase === 'complete'
+                  ? 'Anúncio preparado'
+                  : 'Não foi possível concluir'}
+          wide
+          onClose={() => {
+            if (upsellerProgress.phase === 'complete' || upsellerProgress.phase === 'error') {
+              setUpsellerProgress(null);
+            }
+          }}
+        >
+          <div className={`upseller-progress-status ${upsellerProgress.phase}`}>
+            {['opening', 'generating', 'filling'].includes(upsellerProgress.phase)
+              ? <span className="upseller-progress-spinner" aria-hidden="true" />
+              : <span className="upseller-progress-status-icon" aria-hidden="true">
+                {upsellerProgress.phase === 'complete' ? '✓' : '!'}
+              </span>}
+            <p>
+              {upsellerProgress.phase === 'opening'
+                ? 'Abrindo o formulário e selecionando a loja. Acompanhe essa etapa na aba do UpSeller.'
+                : upsellerProgress.phase === 'generating'
+                  ? `${upsellerProgress.storeName ? `Loja ${upsellerProgress.storeName} selecionada. ` : 'Loja selecionada. '}Agora a IA está criando o texto, estimando o envio e gerando a imagem.`
+                  : upsellerProgress.phase === 'filling'
+                    ? 'A geração terminou. A extensão está preenchendo o anúncio passo a passo e anexando a foto.'
+                    : upsellerProgress.phase === 'complete'
+                      ? 'O preenchimento terminou. Confira os dados e a imagem no UpSeller antes de publicar.'
+                      : upsellerProgress.message}
+            </p>
+          </div>
+          <ol className="upseller-progress-steps">
+            <li className={upsellerProgress.phase === 'opening'
+              ? 'active'
+              : upsellerProgress.phase === 'error' && upsellerProgress.stage === 'opening'
+                ? 'error'
+                : ['generating', 'filling', 'complete'].includes(upsellerProgress.phase) ||
+                  (upsellerProgress.phase === 'error' && upsellerProgress.stage !== 'opening')
+                ? 'complete'
+                : 'pending'}>
+              <span>{upsellerProgress.phase === 'opening'
+                ? <span className="upseller-progress-spinner small" aria-hidden="true" />
+                : upsellerProgress.phase === 'error' && upsellerProgress.stage === 'opening'
+                  ? '!'
+                  : ['generating', 'filling', 'complete'].includes(upsellerProgress.phase) ||
+                    (upsellerProgress.phase === 'error' && upsellerProgress.stage !== 'opening')
+                    ? '✓'
+                    : '1'}</span>
+              <div>
+                <strong>Abrir UpSeller e selecionar loja</strong>
+                <small>A aba abre antes da geração e seleciona sua loja automaticamente</small>
+              </div>
+            </li>
+            <li className={upsellerProgress.phase === 'generating'
+              ? 'active'
+              : upsellerProgress.phase === 'error' && upsellerProgress.stage === 'generating'
+                ? 'error'
+                : ['filling', 'complete'].includes(upsellerProgress.phase) ||
+                  (upsellerProgress.phase === 'error' && upsellerProgress.stage === 'filling')
+                  ? 'complete'
+                  : 'pending'}>
+              <span>{upsellerProgress.phase === 'generating'
+                ? <span className="upseller-progress-spinner small" aria-hidden="true" />
+                : upsellerProgress.phase === 'error' && upsellerProgress.stage === 'generating'
+                    ? '!'
+                    : ['filling', 'complete'].includes(upsellerProgress.phase) ||
+                      (upsellerProgress.phase === 'error' && upsellerProgress.stage === 'filling')
+                      ? '✓'
+                      : '2'}</span>
+              <div>
+                <strong>Gerar conteúdo e imagem</strong>
+                <small>Título, descrição, dados de envio e foto do produto</small>
+              </div>
+            </li>
+            <li className={upsellerProgress.phase === 'filling'
+              ? 'active'
+              : upsellerProgress.phase === 'complete'
+                ? 'complete'
+                : upsellerProgress.phase === 'error' && upsellerProgress.stage === 'filling'
+                  ? 'error'
+                  : 'pending'}>
+              <span>{upsellerProgress.phase === 'filling'
+                ? <span className="upseller-progress-spinner small" aria-hidden="true" />
+                : upsellerProgress.phase === 'complete'
+                  ? '✓'
+                  : upsellerProgress.phase === 'error' && upsellerProgress.stage === 'filling'
+                    ? '!'
+                    : '3'}</span>
+              <div>
+                <strong>Preencher o anúncio</strong>
+                <small>Nome, descrição, preço, medidas, envio e imagem em sequência</small>
+              </div>
+            </li>
+          </ol>
+          {(upsellerProgress.phase === 'complete' || upsellerProgress.phase === 'error') && (
+            <div className="modal-actions">
+              <button className="btn" type="button" onClick={() => setUpsellerProgress(null)}>
+                Fechar
+              </button>
+            </div>
+          )}
+        </Modal>
       )}
     </PageRoot>
   );

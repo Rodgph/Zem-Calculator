@@ -5,6 +5,7 @@ import { parseAmount } from '../lib/pricing.js';
 
 export default function ProductFormDialog({ busy, onClose, onSave }) {
   const [nome, setNome] = useState('');
+  const [descricao, setDescricao] = useState('');
   const [sku, setSku] = useState('');
   const [custo, setCusto] = useState('');
   const [imageBlob, setImageBlob] = useState(null);
@@ -59,6 +60,7 @@ export default function ProductFormDialog({ busy, onClose, onSave }) {
     setError('');
     const saved = await onSave({
       nome: nome.trim(),
+      descricao: descricao.trim(),
       sku: sku.trim().toUpperCase(),
       custo: parsedCost,
       imageBlob,
@@ -91,6 +93,10 @@ export default function ProductFormDialog({ busy, onClose, onSave }) {
         <label className="field">
           Nome do produto
           <input value={nome} onChange={event => setNome(event.target.value)} disabled={busy} />
+        </label>
+        <label className="field">
+          Descrição
+          <textarea value={descricao} onChange={event => setDescricao(event.target.value)} disabled={busy} rows={3} />
         </label>
         <label className="field">
           SKU

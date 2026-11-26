@@ -8,6 +8,8 @@ create table if not exists public.containers (
 
 alter table public.products
   add column if not exists nome text not null default '',
+  add column if not exists descricao text,
+  add column if not exists img_path_secondary text,
   add column if not exists shopee numeric,
   add column if not exists container_id uuid references public.containers(id) on delete cascade;
 

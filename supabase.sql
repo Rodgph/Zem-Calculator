@@ -5,8 +5,11 @@ create extension if not exists pgcrypto;
 create table if not exists products (
   id uuid primary key default gen_random_uuid(),
   sku text not null,
+  nome text not null default '',
   custo numeric not null,
+  descricao text,
   img_path text,
+  img_path_secondary text,
   margens jsonb not null default '{"tiktok":20,"shopee":20,"ml":20}',
   created_at timestamptz not null default now()
 );

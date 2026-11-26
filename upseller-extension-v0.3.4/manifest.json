@@ -1,0 +1,29 @@
+{
+  "manifest_version": 3,
+  "name": "Upseller Bridge",
+  "version": "0.3.4",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAt2fHftzoCai4AONLNOao2PQQlNYSc0eaYIEpe/jAg/7bNdJVLtpG/4E3ebTdWIeWXWsmDMCDhzB6FUL49T8ml6DeGVxac1AL5mGB563sEorprHoLyOVBj2xSKYCXX/jZaUM2USDNFijJn1RKNROX/+qLEX6FchjMIC+s4HgNcGS2oQ45iTZtLkny3amLPwUN/SC2JBAvqRbkbOIogJ3gmW3hZgr/306kNIwiRx8aJgKSpAtJcmq7u62DrREMsaXAx/9rbuCwC2DnnsQ6hESw8qcyn2rJQwhAzWcwp2h6bGRPwD1aSFFcFDE++BMXSOWemGUi+qnaLbNlr4henx6yIwIDAQAB",
+  "description": "Preenche formulários do Upseller a partir do ZEM Calculator com IA (OpenAI ChatGPT)",
+  "permissions": ["activeTab", "scripting", "tabs", "storage"],
+  "host_permissions": ["https://app.upseller.com/*"],
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://app.upseller.com/pt/products/shopee/create*"],
+      "js": ["content-script.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "options_page": "options.html",
+  "externally_connectable": {
+    "matches": [
+      "http://localhost/*",
+      "http://127.0.0.1/*",
+      "https://zemcalculator.vercel.app/*",
+      "https://calculadora-preco-eight.vercel.app/*"
+    ]
+  }
+}

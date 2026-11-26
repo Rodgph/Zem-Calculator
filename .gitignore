@@ -4,3 +4,12 @@ dist
 .env
 .env.*
 !.env.example
+/supabase/.temp/
+/precos-supabase.zip
+/upseller-extension-v0.3.0.zip
+/upseller-extension-v0.3.1.zip
+/upseller-extension-v0.3.2.zip
+/upseller-extension-v0.3.3.zip
+/upseller-extension-v0.3.4.zip
+/upseller-extension-v0.3.5.zip
+.env*

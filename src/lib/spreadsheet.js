@@ -16,6 +16,18 @@ function headerKey(value) {
     .replace(/\s+/g, ' ');
 }
 
+export function findSpreadsheetColumns(header, aliases) {
+  const normalizedAliases = Object.fromEntries(
+    Object.entries(aliases).map(([key, values]) => [key, new Set(values.map(headerKey))]),
+  );
+  return Object.fromEntries(
+    Object.keys(aliases).map(key => [
+      key,
+      header.findIndex(value => normalizedAliases[key].has(headerKey(value))),
+    ]),
+  );
+}
+
 function dispImgId(cell) {
   const formula = String(cell?.f || cell?.v || '');
   const match = formula.match(/DISPIMG\(\s*["']([^"']+)["']/i);
@@ -112,11 +124,28 @@ export async function readContainerFile(file) {
   const aliases = {
     sku: ['sku', '货号', 'codigo'],
     nome: ['nome', 'name', '品名', 'produto', 'product'],
+    descricao: [
+      'descricao',
+      'descrição',
+      'descricao das mercadorias',
+      'descrição das mercadorias',
+      '货物描述',
+      'description',
+      'goods description',
+      'descr',
+      'obs',
+      'observação',
+      'observacao',
+    ],
     custo: ['custo', 'cost'],
     shopee: ['shopee', 'preco', 'valor de venda', 'selling price'],
     image: [
-      'imagem', 'image', 'foto', '图片', 'url', 'url imagem', 'url da imagem',
-      'imagem url', 'image url', 'image_url',
+      'imagem', 'image', 'foto', '图片', '商品图片', 'product image',
+      'url', 'url imagem', 'url da imagem', 'imagem url', 'image url', 'image_url',
+    ],
+    image_secondary: [
+      '装柜图片', 'imagem de embalagem', 'imagem secundária', 'secondary image',
+      'container image', 'packing image',
     ],
   };
   const requiredColumns = ['sku', 'nome', 'custo', 'shopee'];
@@ -136,18 +165,14 @@ export async function readContainerFile(file) {
       raw: true,
       defval: null,
     });
-    const headerRow = preview.findIndex(row =>
-      requiredColumns.every(key => row.some(value => aliases[key].includes(headerKey(value)))),
-    );
+    const headerRow = preview.findIndex(row => {
+      const columns = findSpreadsheetColumns(row, aliases);
+      return requiredColumns.every(key => columns[key] >= 0);
+    });
     if (headerRow < 0) continue;
 
     const header = preview[headerRow];
-    const columns = Object.fromEntries(
-      Object.keys(aliases).map(key => [
-        key,
-        header.findIndex(value => aliases[key].includes(headerKey(value))),
-      ]),
-    );
+    const columns = findSpreadsheetColumns(header, aliases);
     const firstDataRow = bounds.s.r + headerRow + 1;
     const rows = XLSX.utils.sheet_to_json(sheet, {
       header: 1,
@@ -165,27 +190,38 @@ export async function readContainerFile(file) {
       const row = rows[rowIndex];
       const sku = String(row[columns.sku] || '').trim();
       const nome = String(row[columns.nome] || '').trim();
+      const descricao = columns.descricao >= 0 ? String(row[columns.descricao] || '').trim() : '';
       const custo = parseAmount(row[columns.custo]);
       const rawPrice = parseAmount(row[columns.shopee]);
       if (!sku || custo == null || custo <= 0) continue;
 
       const sourceRow = firstDataRow + rowIndex;
-      const imageCell = columns.image >= 0
-        ? sheet[XLSX.utils.encode_cell({ r: sourceRow, c: columns.image })]
-        : null;
-      const imageId = dispImgId(imageCell);
-      const imageValue = String(row[columns.image] || '').trim();
-      const imageUrlCandidate = imageCell?.l?.Target || imageValue;
-      const imageUrl = /^(https?:\/\/|\/\/|data:image\/)/i.test(imageUrlCandidate)
-        ? imageUrlCandidate
-        : null;
+      const readImage = column => {
+        const cell = column >= 0
+          ? sheet[XLSX.utils.encode_cell({ r: sourceRow, c: column })]
+          : null;
+        const imageId = dispImgId(cell);
+        const imageValue = column >= 0 ? String(row[column] || '').trim() : '';
+        const imageUrlCandidate = cell?.l?.Target || imageValue;
+        return {
+          imageId,
+          imageUrl: /^(https?:\/\/|\/\/|data:image\/)/i.test(imageUrlCandidate)
+            ? imageUrlCandidate
+            : null,
+        };
+      };
+      const image = readImage(columns.image);
+      const secondaryImage = readImage(columns.image_secondary);
       products.push({
         sku,
         nome: nome || sku,
+        descricao,
         custo,
         shopee: rawPrice > 0 ? rawPrice : null,
-        imageUrl,
-        imageId,
+        imageUrl: image.imageUrl,
+        imageId: image.imageId,
+        imageUrlSecondary: secondaryImage.imageUrl,
+        imageIdSecondary: secondaryImage.imageId,
       });
     }
 
@@ -198,11 +234,12 @@ export async function readContainerFile(file) {
 
     const imageLoaders = await loadEmbeddedImageLoaders(
       fileBuffer,
-      products.map(product => product.imageId).filter(Boolean),
+      products.flatMap(product => [product.imageId, product.imageIdSecondary]).filter(Boolean),
     );
-    return products.map(({ imageId, ...product }) => ({
+    return products.map(({ imageId, imageIdSecondary, ...product }) => ({
       ...product,
       loadImage: imageId ? imageLoaders.get(imageId) : null,
+      loadImageSecondary: imageIdSecondary ? imageLoaders.get(imageIdSecondary) : null,
     }));
   }
 
