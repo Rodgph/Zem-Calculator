@@ -9,16 +9,10 @@ Este sistema precisa de um projeto Supabase próprio; não reutilize o projeto d
    Para um banco existente, execute também `supabase-product-description.sql` e `supabase-product-images.sql` para garantir as colunas adicionais.
 3. Configure a URL do projeto e a chave pública (**anon** ou **publishable**) em `src/lib/supabase.js`.
    Nunca use a chave `service_role` no frontend.
-4. Para gerar anúncios, cadastre `OPENAI_API_KEY` em **Edge Functions → Secrets**. A OpenAI gera o texto, as estimativas e a imagem do anúncio. Nunca coloque essa chave no frontend ou no repositório.
 
 ## 2. Vercel
 1. Na Vercel, importe este repositório. O Vite usa `npm run build` e gera a pasta `dist`.
 2. Configure a URL e a chave pública do Supabase em `src/lib/supabase.js` antes de publicar.
-
-## Upseller Bridge
-- Instale a pasta `upseller-extension` no Chrome por `chrome://extensions` → **Modo do desenvolvedor** → **Carregar sem compactação**.
-- Em outros computadores, use o pacote da mesma versão e remova a instalação antiga antes de carregar a nova. O ID fixo da extensão é `gfmeaommeefhgngokhdoknkgfccgklmj`.
-- Mantenha a pasta instalada no mesmo local e não remova a propriedade `key` do manifesto; ela mantém o mesmo ID em todas as máquinas.
 
 ## Importar contêineres
 - Selecione **Importar contêiner** ou solte uma planilha `.xlsx`, `.xls` ou `.csv` em qualquer lugar do site.

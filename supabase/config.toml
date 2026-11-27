@@ -1,4 +1,1 @@
 project_id = "chthfkbrkcwgcsijwjix"
-
-[functions.generate-listing]
-verify_jwt = false
